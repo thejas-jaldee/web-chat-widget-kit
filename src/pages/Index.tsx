@@ -1,11 +1,7 @@
-import { Livechat } from '@/components/chatbot/Livechat';
+import EmbeddableDemo from '@/components/chatbot/EmbeddableDemo';
 
 const Index = () => {
-  return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <Livechat />
-    </div>
-  );
+  return <EmbeddableDemo />;
 };
 
 export default Index;
