@@ -47,6 +47,15 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        chatbot: {
+          primary: "hsl(var(--chatbot-primary))",
+          secondary: "hsl(var(--chatbot-secondary))",
+          surface: "hsl(var(--chatbot-surface))",
+          "surface-secondary": "hsl(var(--chatbot-surface-secondary))",
+          text: "hsl(var(--chatbot-text))",
+          "text-muted": "hsl(var(--chatbot-text-muted))",
+          border: "hsl(var(--chatbot-border))",
+        },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
@@ -57,6 +66,18 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+      },
+      backgroundImage: {
+        "chatbot-gradient": "var(--chatbot-gradient)",
+        "chatbot-gradient-light": "var(--chatbot-gradient-light)",
+      },
+      boxShadow: {
+        "chatbot": "var(--chatbot-shadow)",
+        "chatbot-sm": "var(--chatbot-shadow-sm)",
+      },
+      transitionTimingFunction: {
+        "chatbot": "var(--chatbot-transition)",
+        "chatbot-bounce": "var(--chatbot-bounce)",
       },
       borderRadius: {
         lg: "var(--radius)",

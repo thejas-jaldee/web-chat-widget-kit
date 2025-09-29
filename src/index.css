@@ -17,8 +17,8 @@ All colors MUST be HSL.
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 263 70% 58%;
+    --primary-foreground: 0 0% 100%;
 
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
@@ -37,6 +37,23 @@ All colors MUST be HSL.
     --ring: 222.2 84% 4.9%;
 
     --radius: 0.5rem;
+
+    /* Chatbot Design System */
+    --chatbot-primary: 263 70% 58%;
+    --chatbot-secondary: 240 100% 82%;
+    --chatbot-gradient: linear-gradient(135deg, hsl(263 70% 58%), hsl(240 100% 82%));
+    --chatbot-gradient-light: linear-gradient(135deg, hsl(263 70% 70%), hsl(240 100% 88%));
+    --chatbot-surface: 0 0% 100%;
+    --chatbot-surface-secondary: 0 0% 98%;
+    --chatbot-text: 222.2 84% 4.9%;
+    --chatbot-text-muted: 215.4 16.3% 46.9%;
+    --chatbot-border: 220 13% 91%;
+    --chatbot-shadow: 0 10px 30px -10px hsl(263 70% 58% / 0.3);
+    --chatbot-shadow-sm: 0 4px 12px -4px hsl(263 70% 58% / 0.15);
+    
+    /* Animation variables */
+    --chatbot-transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --chatbot-bounce: 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 
     --sidebar-background: 0 0% 98%;
 
