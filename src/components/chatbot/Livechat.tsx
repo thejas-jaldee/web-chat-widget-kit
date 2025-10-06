@@ -21,6 +21,9 @@ import StaticLeadFields, {
   LeadInfo,
   LeadErrors,
 } from "@/components/dynamic-form/StaticLeadFields";
+import { submitLead, type LeadSubmitPayload } from "@/components/lead/LeadSubmit";
+import { JALDEE_BASE_URL, JALDEE_LOCATION, JALDEE_AUTH_TOKEN } from "@/lib/env";
+import { injectLeadFormSkin, injectLeadFormSkinIntoRoot } from "@/sdk/styles/injectFormSkin";
 
 interface ConversationOption {
   id: string;
@@ -76,7 +79,7 @@ type ActionButton =
       className: string;
       id: string;
       type: "form";
-      value: string;
+      value: string; // we’ll treat this as channelEncUid for form case
     };
 
 type FlowMode = "idle" | "action-conversation" | "action-form";
@@ -140,6 +143,19 @@ export const Livechat: React.FC<LivechatProps> = ({
 
   // dedicated form ref for submit
   const formRef = useRef<HTMLFormElement | null>(null);
+  useEffect(() => {
+  const node = formRef.current;
+  if (!node) {
+    injectLeadFormSkin();
+    return;
+  }
+  const rootNode: Node = node.getRootNode();
+  if (typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot) {
+    injectLeadFormSkinIntoRoot(rootNode);
+  } else {
+    injectLeadFormSkin();
+  }
+}, [isOpen, currentView]);
 
   const startTimeoutRef = useRef<number | null>(null);
   const intervalRef = useRef<number | null>(null);
@@ -156,6 +172,9 @@ export const Livechat: React.FC<LivechatProps> = ({
   const [dynamicValues, setDynamicValues] = useState<Record<string, unknown>>({});
 
   const [flowMode, setFlowMode] = useState<FlowMode>("idle");
+
+  // ✅ NEW: remember the channelEncUid when opening the form
+  const [channelEncUid, setChannelEncUid] = useState<string>("");
 
   function validateLeadInfo(data: LeadInfo): boolean {
     const errs: LeadErrors = {};
@@ -242,6 +261,10 @@ export const Livechat: React.FC<LivechatProps> = ({
       case "form": {
         setFlowMode("action-form");
         setCurrentView("form");
+
+        // ✅ remember the selected channel for submit payload
+        setChannelEncUid(action.value);
+
         const controller = new AbortController();
         setFormLoading(true);
         setFormError(null);
@@ -338,6 +361,7 @@ export const Livechat: React.FC<LivechatProps> = ({
     setDynamicValues({});
     setLeadInfo({ firstName: "", lastName: "", phoneNumber: "", emailId: "" });
     setLeadErrors({});
+    setChannelEncUid("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -381,9 +405,9 @@ export const Livechat: React.FC<LivechatProps> = ({
         <div
           className="
             bg-[linear-gradient(90deg,rgba(131,80,242,1)_20%,rgba(61,125,243,1)_80%)]
-            w-[100dvw] h-[100dvh]
+            w-[100dvw] h-[calc(100dvh-2rem)]
             sm:w-[32vw] sm:min-w-[380px] sm:max-w-[520px]
-            sm:h-[200vh] sm:max-h-[calc(100dvh-2rem)]
+             **sm:h-[calc(100dvh-4rem)] sm:max-h-[calc(100dvh-4rem)]**
             sm:rounded-[25px]
             relative overflow-hidden
             flex flex-col px-1 py-1 sm:px-1 sm:py-2 gap-1 sm:gap-2
@@ -392,7 +416,7 @@ export const Livechat: React.FC<LivechatProps> = ({
         >
           {/* Header */}
           {!isCompact ? (
-            <div className={`flex flex-col items-center pt-2 sm:pt-3 ${headerClsBase} px-2 sm:px-3`}>
+            <div className={`flex flex-col items-center pt-2 sm:pt-12 ${headerClsBase} px-2 sm:px-3`}>
               <div className="mb-2 flex items-center w-full max-w-full">
                 <div className="mx-auto">
                   <Avatar className="w-[56px] h-[56px] sm:w-[72px] sm:h-[72px]">
@@ -464,7 +488,7 @@ export const Livechat: React.FC<LivechatProps> = ({
           )}
 
           {/* Chat Card */}
-          <Card className="flex-1 min-h-0 w-full bg-white rounded-[18px] sm:rounded-[25px] border border-[#e2e2e2] shadow-lg overflow-hidden">
+          <Card className={`flex-1 min-h-0 w-full bg-white rounded-[18px] sm:rounded-[25px] border border-[#e2e2e2] shadow-lg overflow-hidden ${headerClsBase}`}>
             <CardContent className="p-3 sm:p-4 h-full flex flex-col min-h-0">
               {currentView === "welcome" ? (
                 <>
@@ -516,7 +540,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                         onChange={(e) => setUserInput(e.target.value)}
                         onKeyDown={handleKeyDown}
                         placeholder="Write a message"
-                        className="flex-1 border-none bg-transparent font-medium text-[clamp(14px,1.6vw,18px)] focus-visible:ring-0 focus-visible:ring-offset-0"
+                        className="flex-1 border-none bg-transparent font-medium text-[clamp(14px,1.6vw,18px)] focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-[#9ca3af] text-[#272727]"
                       />
                       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                         <Button variant="ghost" size="icon" className="w-7 h-7 sm:w-[26px] sm:h-[26px] hover:bg-gray-100">
@@ -589,7 +613,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                 <div className="flex-1 min-h-0 flex flex-col">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-[15px] font-semibold text-[#272727]">
-                      Contact form
+                      Contact Us
                     </h3>
                     <button
                       onClick={() => { setCurrentView("welcome"); setFlowMode("idle"); }}
@@ -601,34 +625,86 @@ export const Livechat: React.FC<LivechatProps> = ({
 
                   {/* Single scroll container for the WHOLE form */}
                   <form
-                    ref={formRef}
-                    className="flex-1 min-h-0 overflow-y-auto rounded-xl border border-[#e2e2e2] p-4 space-y-4"
-                    style={{ WebkitOverflowScrolling: "touch" }}
-                    onSubmit={(e) => {
+                     ref={formRef}
+                      className="lsdk-form lsdk-scroll flex-1 min-h-0 overflow-y-auto rounded-xl border border-[#e2e2e2] p-4 space-y-4"
+                      style={{ WebkitOverflowScrolling: "touch" }}
+                                        onSubmit={async (e) => {
                       e.preventDefault();
                       if (!validateLeadInfo(leadInfo)) return;
 
-                      // Build payload (static + dynamic)
-                      const payload: { lead: LeadInfo; fields: Record<string, unknown> } = {
-                        lead: leadInfo,
-                        fields: dynamicValues,
+                      // ✅ Build server payload
+                      const payload: LeadSubmitPayload = {
+                        channelEncUid: channelEncUid || "ch-43c0036-4t",
+                        crmLeadConsumer: {
+                          firstName: leadInfo.firstName.trim(),
+                          lastName: leadInfo.lastName?.trim() || undefined,
+                          countryCode: "+91", // adjust if you add a selector
+                          phone: (leadInfo.phoneNumber || "").trim(),
+                          email: leadInfo.emailId?.trim() || undefined,
+                        },
+                        templateSchemaValue: dynamicValues ?? {},
                       };
 
-                      // Submit behavior – here just echo and switch to conversation
+                      // Optimistic UI
                       setMessages((prev) => [
                         ...prev,
                         {
                           id: Date.now().toString(),
-                          type: "bot",
-                          content: "Thanks! We received your request.",
+                          type: "user",
+                          content: "Submitted contact request",
                           timestamp: new Date(),
                         },
                       ]);
                       setCurrentView("conversation");
                       setFlowMode("action-conversation");
 
-                      // TODO: send `payload` to your API.
-                      // await fetch('/api/submit', { method:'POST', body: JSON.stringify(payload) })
+                      try {
+                        const res = await submitLead(payload, {
+                          baseUrl: JALDEE_BASE_URL,
+                          location: JALDEE_LOCATION,
+                          authToken: JALDEE_AUTH_TOKEN || undefined,
+                          timeoutMs: 15000,
+                          includeCredentials: true,
+                        });
+
+                        setMessages((prev) => [
+                          ...prev,
+                          {
+                            id: (Date.now() + 1).toString(),
+                            type: "bot",
+                            content: "Thanks! Your request has been received. Our team will contact you shortly.",
+                            timestamp: new Date(),
+                          },
+                          {
+                            id: (Date.now() + 2).toString(),
+                            type: "bot",
+                            content: `Reference: ${summarizeRef(res)}`,
+                            timestamp: new Date(),
+                          },
+                        ]);
+
+                        // reset form values
+                        setLeadInfo({ firstName: "", lastName: "", phoneNumber: "", emailId: "" });
+                        setDynamicValues({});
+                      } catch (err: unknown) {
+                          const hasNameMessage = (e: unknown): e is { name?: string; message?: unknown } =>
+                            typeof e === "object" && e !== null;
+
+                          let msg = "Could not submit your request. Please try again.";
+                          if (hasNameMessage(err) && (err as { name?: string }).name === "LeadSubmitError") {
+                            const maybeMsg = (err as { message?: unknown }).message;
+                            msg = typeof maybeMsg === "string" ? maybeMsg : "Lead submission failed";
+                          }
+                        setMessages((prev) => [
+                          ...prev,
+                          {
+                            id: (Date.now() + 3).toString(),
+                            type: "bot",
+                            content: `⚠️ ${msg}`,
+                            timestamp: new Date(),
+                          },
+                        ]);
+                      }
                     }}
                   >
                     {/* Static lead fields */}
@@ -678,7 +754,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                         className="w-full h-[44px] rounded-full bg-gradient-to-r from-[rgba(131,80,242,1)] to-[rgba(61,125,243,1)] hover:opacity-90"
                         onClick={() => formRef.current?.requestSubmit()}
                       >
-                        Submit
+                            <span className="text-white font-medium">Submit</span>
                       </Button>
                     </div>
                   </div>
@@ -743,3 +819,21 @@ export const Livechat: React.FC<LivechatProps> = ({
     </div>
   );
 };
+type RefLike = {
+  id?: unknown;
+  leadId?: unknown;
+  encUid?: unknown;
+  reference?: unknown;
+  ref?: unknown;
+};
+// ✅ helper to show a tiny reference from server response if possible
+function summarizeRef(res: unknown): string {
+  if (res && typeof res === "object") {
+    const r = res as RefLike;
+    const candidate = r.id ?? r.leadId ?? r.encUid ?? r.reference ?? r.ref;
+    if (typeof candidate === "string" || typeof candidate === "number") {
+      return String(candidate);
+    }
+  }
+  return "submitted";
+}
