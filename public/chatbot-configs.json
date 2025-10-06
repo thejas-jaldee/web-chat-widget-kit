@@ -1,0 +1,198 @@
+{
+  "default": {
+    "id": "default",
+    "name": "J",
+    "greeting": "Hey J!",
+    "subtitle": "You can ask anything About Jaldee!",
+    "avatar": "🤖",
+    "quickActions": [
+      {
+        "id": "contact",
+        "label": "Contact Us",
+        "type": "link",
+        "value": "/contact"
+      },
+      {
+        "id": "product",
+        "label": "Product Enquiry",
+        "type": "conversation",
+        "value": "product-enquiry"
+      },
+      {
+        "id": "support",
+        "label": "Create Support Ticket",
+        "type": "conversation",
+        "value": "support-ticket"
+      },
+      {
+        "id": "quote",
+        "label": "Get Quote",
+        "type": "conversation",
+        "value": "get-quote"
+      },
+      {
+        "id": "feedback",
+        "label": "Feedback",
+        "type": "conversation",
+        "value": "feedback"
+      }
+    ],
+    "conversations": {
+      "product-enquiry": {
+        "title": "Product Enquiry",
+        "message": "How Can I help you today?",
+        "options": [
+          {
+            "id": "login-issues",
+            "label": "Login issues",
+            "response": "I can help you with login issues. Please describe the problem you're experiencing."
+          },
+          {
+            "id": "payment-features",
+            "label": "Payment features", 
+            "response": "Our payment system supports multiple methods. What specific payment feature would you like to know about?"
+          },
+          {
+            "id": "appointment-issues",
+            "label": "Appointment issues",
+            "response": "I can assist with appointment-related concerns. What issue are you facing?"
+          }
+        ]
+      },
+      "support-ticket": {
+        "title": "Create Support Ticket",
+        "message": "Sure, What are your concerns?",
+        "options": [
+          {
+            "id": "login-issues",
+            "label": "Login issues",
+            "response": "I'll help you create a support ticket for login issues. Please provide more details about the problem."
+          },
+          {
+            "id": "payment-features",
+            "label": "Payment features",
+            "response": "I'll create a support ticket for payment-related issues. Please describe what you need help with."
+          },
+          {
+            "id": "appointment-issues", 
+            "label": "Appointment issues",
+            "response": "I'll help you create a support ticket for appointment issues. What specific problem are you experiencing?"
+          }
+        ]
+      },
+      "get-quote": {
+        "title": "Get Quote",
+        "message": "I'd be happy to help you get a quote. What service are you interested in?",
+        "options": [
+          {
+            "id": "basic-plan",
+            "label": "Basic Plan",
+            "response": "Great choice! Our Basic Plan starts at $29/month. Would you like me to send you detailed pricing information?"
+          },
+          {
+            "id": "premium-plan",
+            "label": "Premium Plan", 
+            "response": "Excellent! Our Premium Plan offers advanced features for $99/month. I can provide you with a custom quote."
+          },
+          {
+            "id": "enterprise",
+            "label": "Enterprise Solution",
+            "response": "Perfect! For enterprise solutions, we offer customized pricing. Let me connect you with our sales team."
+          }
+        ]
+      },
+      "feedback": {
+        "title": "Feedback",
+        "message": "We'd love to hear your feedback! What would you like to share?",
+        "options": [
+          {
+            "id": "positive",
+            "label": "Positive Feedback",
+            "response": "Thank you for your positive feedback! We really appreciate it."
+          },
+          {
+            "id": "suggestion",
+            "label": "Suggestion",
+            "response": "We value your suggestions! Please share your ideas for improvement."
+          },
+          {
+            "id": "issue",
+            "label": "Report Issue",
+            "response": "I'm sorry to hear about the issue. Please provide details so we can help resolve it."
+          }
+        ]
+      }
+    },
+    "theme": {
+      "primaryColor": "#8b5cf6",
+      "secondaryColor": "#a78bfa",
+      "position": "bottom-right"
+    }
+  },
+  "company-xyz": {
+    "id": "company-xyz", 
+    "name": "Sarah",
+    "greeting": "Hi there!",
+    "subtitle": "How can I assist you with XYZ Company today?",
+    "avatar": "👩‍💼",
+    "quickActions": [
+      {
+        "id": "pricing",
+        "label": "View Pricing",
+        "type": "link",
+        "value": "/pricing"
+      },
+      {
+        "id": "demo",
+        "label": "Book Demo",
+        "type": "conversation", 
+        "value": "book-demo"
+      },
+      {
+        "id": "support",
+        "label": "Technical Support",
+        "type": "conversation",
+        "value": "tech-support"
+      }
+    ],
+    "conversations": {
+      "book-demo": {
+        "title": "Book Demo",
+        "message": "I'd love to schedule a demo for you! What's your preferred time?",
+        "options": [
+          {
+            "id": "this-week",
+            "label": "This week",
+            "response": "Great! I can schedule a demo for this week. What day works best for you?"
+          },
+          {
+            "id": "next-week",
+            "label": "Next week",
+            "response": "Perfect! Next week it is. Please let me know your preferred day and time."
+          }
+        ]
+      },
+      "tech-support": {
+        "title": "Technical Support", 
+        "message": "What technical issue can I help you with?",
+        "options": [
+          {
+            "id": "api-issues",
+            "label": "API Integration",
+            "response": "I can help with API integration issues. What specific problem are you facing?"
+          },
+          {
+            "id": "platform-bug",
+            "label": "Platform Bug",
+            "response": "I'll help you report a platform bug. Please describe the issue in detail."
+          }
+        ]
+      }
+    },
+    "theme": {
+      "primaryColor": "#3b82f6",
+      "secondaryColor": "#60a5fa", 
+      "position": "bottom-left"
+    }
+  }
+}
