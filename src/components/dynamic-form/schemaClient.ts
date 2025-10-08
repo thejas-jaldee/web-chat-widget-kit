@@ -1,24 +1,31 @@
-const JALDEE_BASE = "https://scale.jaldee.com";
+const UIS3_BASE = "https://jaldeeuiscale.s3.ap-south-1.amazonaws.com";
+const leadid=155523;
+/**
+ * Fetches the Lead SDK JSON from S3 instead of the Jaldee API.
+ * @param uniqueId Account or tenant ID (e.g., "155523")
+ * @param signal Optional AbortSignal for cancellation
+ */
+export async function getLeadSdkJson(uniqueId: string, signal?: AbortSignal) {
+  const url = `${UIS3_BASE}/${encodeURIComponent(leadid)}/lead-sdk.json`;
+  return getLeadSdkJsonByUrl(url, signal);
+}
 
-export async function getSchema(channelId: string, signal?: AbortSignal) {
-  const url = `${JALDEE_BASE}/v1/rest/consumer/crm/lead/template/channel/${encodeURIComponent(
-    channelId
-  )}`;
-
+/**
+ * Generic fetcher by full S3 URL.
+ */
+export async function getLeadSdkJsonByUrl(url: string, signal?: AbortSignal) {
   const res = await fetch(url, {
     method: "GET",
     signal,
     headers: {
       Accept: "application/json",
-      // Authorization: `Bearer ${YOUR_TOKEN}`, // <-- add if needed
     },
-    // mode: "cors", // default; keep if you proxy through Vite you can omit
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Jaldee schema fetch failed (${res.status}): ${text || res.statusText}`);
+    throw new Error(`Lead SDK JSON fetch failed (${res.status}): ${text || res.statusText}`);
   }
 
-  return res.json(); // raw schema; adapter will shape it
+  return res.json(); // parsed JSON data
 }

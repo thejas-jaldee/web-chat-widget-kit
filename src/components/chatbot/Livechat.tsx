@@ -15,7 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import DynamicForm from "@/components/dynamic-form/DynamicForm";
 import type { DynamicFormSchema, SimpleField } from "@/components/dynamic-form/types";
-import { getSchema } from "@/components/dynamic-form/schemaClient";
+import { getLeadSdkJson } from "@/components/dynamic-form/schemaClient";
 import { adaptToDynamicFormSchema } from "@/components/dynamic-form/schemaAdapter";
 import StaticLeadFields, {
   LeadInfo,
@@ -30,13 +30,11 @@ interface ConversationOption {
   label: string;
   response: string;
 }
-
 interface Conversation {
   title: string;
   message: string;
   options: ConversationOption[];
 }
-
 interface ChatbotConfig {
   id: string;
   name: string;
@@ -51,7 +49,6 @@ interface ChatbotConfig {
     position: "bottom-right" | "bottom-left";
   };
 }
-
 interface Message {
   id: string;
   type: "bot" | "user";
@@ -59,32 +56,36 @@ interface Message {
   timestamp: Date;
   options?: ConversationOption[];
 }
-
 interface LivechatProps {
   configId?: string;
   className?: string;
 }
 
 type ActionButton =
-  | { text: string; className: string; id: string; type: "link"; value: string }
+  | { text: string; className: string; id: "contact" | "product" | string; type: "link"; value: string }
   | {
       text: string;
       className: string;
-      id: string;
+      id: "contact" | "product" | string;
       type: "conversation";
       value: string;
     }
   | {
       text: string;
       className: string;
-      id: string;
+      id: "contact" | "product" | string;
       type: "form";
-      value: string; // we’ll treat this as channelEncUid for form case
+      value: string; // channelEncUid for form case
     };
 
 type FlowMode = "idle" | "action-conversation" | "action-form";
 
-/** Typed helper to blank specific titles anywhere in the SimpleField tree */
+/** lowercases string values safely */
+function lower(v: unknown): string {
+  return typeof v === "string" ? v.toLowerCase() : "";
+}
+
+/** Hide given section titles anywhere in the schema tree */
 function stripTitles(s: DynamicFormSchema, hideSections: string[] = []): DynamicFormSchema {
   const lowered = new Set(hideSections.map((t) => t.toLowerCase()));
   const blankIfHidden = (title?: string) =>
@@ -92,35 +93,83 @@ function stripTitles(s: DynamicFormSchema, hideSections: string[] = []): Dynamic
 
   const mapField = (f: SimpleField): SimpleField => {
     if (f.type === "object") {
-      return {
-        ...f,
-        title: blankIfHidden(f.title),
-        fields: (f.fields ?? []).map(mapField),
-      };
+      return { ...f, title: blankIfHidden(f.title), fields: (f.fields ?? []).map(mapField) };
     }
     if (f.type === "array") {
-      const mapped: SimpleField = {
-        ...f,
-        title: blankIfHidden(f.title),
-      };
-      if (f.items && f.items.type === "object") {
-        mapped.items = { ...f.items, fields: (f.items.fields ?? []).map(mapField) };
-      } else if (f.items) {
-        mapped.items = { ...f.items };
+      const mapped: SimpleField = { ...f, title: blankIfHidden(f.title) };
+      const items = f.items as unknown;
+      if (items && typeof items === "object" && "type" in (items as Record<string, unknown>)) {
+        const itemField = items as SimpleField;
+        mapped.items =
+          itemField.type === "object"
+            ? { ...itemField, fields: (itemField.fields ?? []).map(mapField) }
+            : itemField;
       }
+      if (f.fields && f.fields.length) mapped.fields = f.fields.map(mapField);
+      return mapped;
+    }
+    return { ...f, title: blankIfHidden(f.title) };
+  };
+
+  return { ...s, title: "", fields: s.fields.map(mapField) };
+}
+
+/** Remove fields by case-insensitive title/name/key anywhere in the tree (no `any`) */
+function removeFields(s: DynamicFormSchema, toRemove: string[] = []): DynamicFormSchema {
+  if (!toRemove.length) return s;
+  const targets = new Set(toRemove.map((t) => t.toLowerCase()));
+
+  const hasKey = (obj: unknown, key: string): obj is Record<string, unknown> =>
+    typeof obj === "object" && obj !== null && key in (obj as Record<string, unknown>);
+
+  const shouldDrop = (f: SimpleField): boolean => {
+    const title = lower((f as { title?: unknown }).title);
+    const name = hasKey(f, "name") ? lower((f as Record<string, unknown>)["name"]) : "";
+    const key = hasKey(f, "key") ? lower((f as Record<string, unknown>)["key"]) : "";
+    return targets.has(title) || (name !== "" && targets.has(name)) || (key !== "" && targets.has(key));
+  };
+
+  const walk = (f: SimpleField): SimpleField | null => {
+    if (shouldDrop(f)) return null;
+
+    if (f.type === "object") {
+      const children = (f.fields ?? []).map(walk).filter((x): x is SimpleField => x !== null);
+      return { ...f, fields: children };
+    }
+
+    if (f.type === "array") {
+      const mapped: SimpleField = { ...f }; // prefer-const satisfied
+      const items = f.items as unknown;
+
+      if (items && typeof items === "object" && "type" in (items as Record<string, unknown>)) {
+        const itemField = items as SimpleField;
+        if (shouldDrop(itemField)) return null;
+
+        if (itemField.type === "object") {
+          const newItemFields = (itemField.fields ?? [])
+            .map(walk)
+            .filter((x): x is SimpleField => x !== null);
+          mapped.items = { ...itemField, fields: newItemFields };
+        } else {
+          mapped.items = itemField;
+        }
+      } else if (items !== undefined) {
+        // keep primitive/unknown items as-is without casting to any
+        (mapped as unknown as { items?: unknown }).items = items;
+      }
+
       if (f.fields && f.fields.length) {
-        mapped.fields = f.fields.map(mapField);
+        mapped.fields = f.fields.map(walk).filter((x): x is SimpleField => x !== null);
       }
       return mapped;
     }
-    // primitive
-    return { ...f, title: blankIfHidden(f.title) };
+
+    return { ...f };
   };
 
   return {
     ...s,
-    title: "", // hide top-level (e.g., "Default Template")
-    fields: s.fields.map(mapField),
+    fields: s.fields.map(walk).filter((x): x is SimpleField => x !== null),
   };
 }
 
@@ -128,7 +177,7 @@ export const Livechat: React.FC<LivechatProps> = ({
   configId = "default",
   className = "",
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
   const [config, setConfig] = useState<ChatbotConfig | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [userInput, setUserInput] = useState("");
@@ -141,21 +190,25 @@ export const Livechat: React.FC<LivechatProps> = ({
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // dedicated form ref for submit
+  // dynamic form/UI switches
+  const [formTitle, setFormTitle] = useState<string>("");
+  const [showDynamicForm, setShowDynamicForm] = useState<boolean>(false);
+
+  // dedicated form ref for submit + skin injection
   const formRef = useRef<HTMLFormElement | null>(null);
   useEffect(() => {
-  const node = formRef.current;
-  if (!node) {
-    injectLeadFormSkin();
-    return;
-  }
-  const rootNode: Node = node.getRootNode();
-  if (typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot) {
-    injectLeadFormSkinIntoRoot(rootNode);
-  } else {
-    injectLeadFormSkin();
-  }
-}, [isOpen, currentView]);
+    const node = formRef.current;
+    if (!node) {
+      injectLeadFormSkin();
+      return;
+    }
+    const rootNode: Node = node.getRootNode();
+    if (typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot) {
+      injectLeadFormSkinIntoRoot(rootNode);
+    } else {
+      injectLeadFormSkin();
+    }
+  }, [isOpen, currentView]);
 
   const startTimeoutRef = useRef<number | null>(null);
   const intervalRef = useRef<number | null>(null);
@@ -167,13 +220,8 @@ export const Livechat: React.FC<LivechatProps> = ({
     emailId: "",
   });
   const [leadErrors, setLeadErrors] = useState<LeadErrors>({});
-
-  // collect dynamic form values while embedded (no any)
   const [dynamicValues, setDynamicValues] = useState<Record<string, unknown>>({});
-
   const [flowMode, setFlowMode] = useState<FlowMode>("idle");
-
-  // ✅ NEW: remember the channelEncUid when opening the form
   const [channelEncUid, setChannelEncUid] = useState<string>("");
 
   function validateLeadInfo(data: LeadInfo): boolean {
@@ -192,8 +240,7 @@ export const Livechat: React.FC<LivechatProps> = ({
     if (data.emailId) {
       const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.emailId);
       if (!emailOk) errs.emailId = "Please enter a valid email.";
-      if (data.emailId.length > 200)
-        errs.emailId = "Email cannot exceed 200 characters.";
+      if (data.emailId.length > 200) errs.emailId = "Email cannot exceed 200 characters.";
     }
     setLeadErrors(errs);
     return Object.keys(errs).length === 0;
@@ -201,7 +248,7 @@ export const Livechat: React.FC<LivechatProps> = ({
 
   const actionButtons: ActionButton[] = [
     { text: "Contact Us", className: "w-[120px]", id: "contact", type: "form", value: "ch-43c0036-4t" },
-    { text: "Product Enquiry", className: "w-[161px]", id: "product", type: "conversation", value: "product-enquiry" },
+    { text: "Product Enquiry", className: "w-[161px]", id: "product", type: "form", value: "ch-43c0036-4t" },
     { text: "Create Support Ticket", className: "w-[200px]", id: "support", type: "conversation", value: "support-ticket" },
     { text: "Get Quote", className: "w-[119px]", id: "quote", type: "conversation", value: "get-quote" },
     { text: "Feedback", className: "w-[107px]", id: "feedback", type: "conversation", value: "feedback" },
@@ -256,48 +303,6 @@ export const Livechat: React.FC<LivechatProps> = ({
     }
   }, [messages, flowMode]);
 
-  const handleQuickAction = (action: ActionButton) => {
-    switch (action.type) {
-      case "form": {
-        setFlowMode("action-form");
-        setCurrentView("form");
-
-        // ✅ remember the selected channel for submit payload
-        setChannelEncUid(action.value);
-
-        const controller = new AbortController();
-        setFormLoading(true);
-        setFormError(null);
-        setFormSchema(null);
-        setDynamicValues({});
-        (async () => {
-          try {
-            const raw = await getSchema(action.value, controller.signal);
-            const schemaNode = raw?.templateSchema ?? raw;
-            let schema = adaptToDynamicFormSchema(schemaNode);
-
-            // hide top title and the “Additional Info” section safely (no any)
-            schema = stripTitles(schema, ["Additional Info"]);
-            setFormSchema(schema);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : "Failed to load form";
-            setFormError(msg);
-          } finally {
-            setFormLoading(false);
-          }
-        })();
-        return;
-      }
-      case "link":
-        window.open(action.value, "_blank");
-        return;
-      case "conversation":
-        setFlowMode("action-conversation");
-        startConversation(action.value);
-        return;
-    }
-  };
-
   const startConversation = (conversationId: string) => {
     if (!config) return;
     const conversation = config.conversations[conversationId];
@@ -349,6 +354,75 @@ export const Livechat: React.FC<LivechatProps> = ({
     if (currentView !== "conversation") setCurrentView("conversation");
   };
 
+  const handleQuickAction = (action: ActionButton) => {
+    switch (action.type) {
+      case "form": {
+        setFlowMode("action-form");
+        setCurrentView("form");
+        setChannelEncUid(action.value);
+
+        // Reset form state
+        setFormError(null);
+        setDynamicValues({});
+        setLeadErrors({});
+        setLeadInfo({ firstName: "", lastName: "", phoneNumber: "", emailId: "" });
+
+        if (action.id === "contact") {
+          // Static only
+          setShowDynamicForm(false);
+          setFormTitle("Contact Us");
+          setFormSchema(null);
+          setFormLoading(false);
+          return;
+        }
+
+        if (action.id === "product") {
+          // Dynamic form with City removed
+          setShowDynamicForm(true);
+          setFormTitle("Product Enquiry");
+          setFormSchema(null);
+          setFormLoading(true);
+
+          const controller = new AbortController();
+          (async () => {
+            try {
+              const raw = await getLeadSdkJson(action.value, controller.signal);
+              const schemaNode = raw?.templateSchema ?? raw;
+              let schema = adaptToDynamicFormSchema(schemaNode);
+
+              schema = stripTitles(schema, ["Additional Info"]);
+              schema = removeFields(schema, ["City"]);
+
+              setFormSchema(schema);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : "Failed to load form";
+              setFormError(msg);
+            } finally {
+              setFormLoading(false);
+            }
+          })();
+          return;
+        }
+
+        // Fallback: static-only
+        setShowDynamicForm(false);
+        setFormTitle("Form");
+        setFormSchema(null);
+        setFormLoading(false);
+        return;
+      }
+
+      case "link":
+        window.open(action.value, "_blank");
+        return;
+
+      case "conversation":
+        setFlowMode("action-conversation");
+        startConversation(action.value);
+        return;
+    }
+  };
+
   const resetChat = () => {
     setMessages([]);
     setCurrentView("welcome");
@@ -362,6 +436,8 @@ export const Livechat: React.FC<LivechatProps> = ({
     setLeadInfo({ firstName: "", lastName: "", phoneNumber: "", emailId: "" });
     setLeadErrors({});
     setChannelEncUid("");
+    setFormTitle("");
+    setShowDynamicForm(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -407,7 +483,7 @@ export const Livechat: React.FC<LivechatProps> = ({
             bg-[linear-gradient(90deg,rgba(131,80,242,1)_20%,rgba(61,125,243,1)_80%)]
             w-[100dvw] h-[calc(100dvh-2rem)]
             sm:w-[32vw] sm:min-w-[380px] sm:max-w-[520px]
-             **sm:h-[calc(100dvh-4rem)] sm:max-h-[calc(100dvh-4rem)]**
+            sm:h-[calc(100dvh-4rem)] sm:max-h-[calc(100dvh-4rem)]
             sm:rounded-[25px]
             relative overflow-hidden
             flex flex-col px-1 py-1 sm:px-1 sm:py-2 gap-1 sm:gap-2
@@ -609,11 +685,11 @@ export const Livechat: React.FC<LivechatProps> = ({
                   </button>
                 </div>
               ) : (
-                // === SINGLE FORM VIEW (static + dynamic, one submit) ===
+                // === SINGLE FORM VIEW (static + optional dynamic, one submit) ===
                 <div className="flex-1 min-h-0 flex flex-col">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-[15px] font-semibold text-[#272727]">
-                      Contact Us
+                      {formTitle || "Form"}
                     </h3>
                     <button
                       onClick={() => { setCurrentView("welcome"); setFlowMode("idle"); }}
@@ -625,24 +701,23 @@ export const Livechat: React.FC<LivechatProps> = ({
 
                   {/* Single scroll container for the WHOLE form */}
                   <form
-                     ref={formRef}
-                      className="lsdk-form lsdk-scroll flex-1 min-h-0 overflow-y-auto rounded-xl border border-[#e2e2e2] p-4 space-y-4"
-                      style={{ WebkitOverflowScrolling: "touch" }}
-                                        onSubmit={async (e) => {
+                    ref={formRef}
+                    className="lsdk-form lsdk-scroll flex-1 min-h-0 overflow-y-auto rounded-xl border border-[#e2e2e2] p-4 space-y-4"
+                    style={{ WebkitOverflowScrolling: "touch" }}
+                    onSubmit={async (e) => {
                       e.preventDefault();
                       if (!validateLeadInfo(leadInfo)) return;
 
-                      // ✅ Build server payload
                       const payload: LeadSubmitPayload = {
                         channelEncUid: channelEncUid || "ch-43c0036-4t",
                         crmLeadConsumer: {
                           firstName: leadInfo.firstName.trim(),
                           lastName: leadInfo.lastName?.trim() || undefined,
-                          countryCode: "+91", // adjust if you add a selector
+                          countryCode: "+91",
                           phone: (leadInfo.phoneNumber || "").trim(),
                           email: leadInfo.emailId?.trim() || undefined,
                         },
-                        templateSchemaValue: dynamicValues ?? {},
+                        templateSchemaValue: showDynamicForm ? (dynamicValues ?? {}) : {},
                       };
 
                       // Optimistic UI
@@ -651,7 +726,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                         {
                           id: Date.now().toString(),
                           type: "user",
-                          content: "Submitted contact request",
+                          content: `Submitted ${formTitle || "request"}`,
                           timestamp: new Date(),
                         },
                       ]);
@@ -687,14 +762,14 @@ export const Livechat: React.FC<LivechatProps> = ({
                         setLeadInfo({ firstName: "", lastName: "", phoneNumber: "", emailId: "" });
                         setDynamicValues({});
                       } catch (err: unknown) {
-                          const hasNameMessage = (e: unknown): e is { name?: string; message?: unknown } =>
-                            typeof e === "object" && e !== null;
+                        const hasNameMessage = (e: unknown): e is { name?: string; message?: unknown } =>
+                          typeof e === "object" && e !== null;
 
-                          let msg = "Could not submit your request. Please try again.";
-                          if (hasNameMessage(err) && (err as { name?: string }).name === "LeadSubmitError") {
-                            const maybeMsg = (err as { message?: unknown }).message;
-                            msg = typeof maybeMsg === "string" ? maybeMsg : "Lead submission failed";
-                          }
+                        let msg = "Could not submit your request. Please try again.";
+                        if (hasNameMessage(err) && (err as { name?: string }).name === "LeadSubmitError") {
+                          const maybeMsg = (err as { message?: unknown }).message;
+                          msg = typeof maybeMsg === "string" ? maybeMsg : "Lead submission failed";
+                        }
                         setMessages((prev) => [
                           ...prev,
                           {
@@ -707,15 +782,15 @@ export const Livechat: React.FC<LivechatProps> = ({
                       }
                     }}
                   >
-                    {/* Static lead fields */}
+                    {/* Static lead fields (always visible) */}
                     <StaticLeadFields
                       value={leadInfo}
                       onChange={setLeadInfo}
                       errors={leadErrors}
                     />
 
-                    {/* Dynamic fields rendered embedded (no inner form, no submit, no titles) */}
-                    {!formLoading && !formError && formSchema && (
+                    {/* Dynamic fields only when required (e.g., Product Enquiry) */}
+                    {showDynamicForm && !formLoading && !formError && formSchema && (
                       <DynamicForm
                         schema={formSchema}
                         mode="embedded"
@@ -725,11 +800,11 @@ export const Livechat: React.FC<LivechatProps> = ({
                       />
                     )}
 
-                    {formLoading && (
+                    {showDynamicForm && formLoading && (
                       <div className="text-sm text-[#667084]">Loading form…</div>
                     )}
 
-                    {formError && (
+                    {showDynamicForm && formError && (
                       <div className="text-sm text-red-600">
                         {formError}{" "}
                         <button
@@ -754,7 +829,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                         className="w-full h-[44px] rounded-full bg-gradient-to-r from-[rgba(131,80,242,1)] to-[rgba(61,125,243,1)] hover:opacity-90"
                         onClick={() => formRef.current?.requestSubmit()}
                       >
-                            <span className="text-white font-medium">Submit</span>
+                        <span className="text-white font-medium">Submit</span>
                       </Button>
                     </div>
                   </div>
@@ -792,7 +867,7 @@ export const Livechat: React.FC<LivechatProps> = ({
               </Avatar>
               <div>
                 <h3 className="font-semibold">{config?.greeting}</h3>
-                <p className="text-sm text-white/80">Click to expand</p>
+                <p className="text-[10px] text-white/80">Click to expand</p>
               </div>
             </div>
             <div className="flex gap-2">
@@ -819,6 +894,7 @@ export const Livechat: React.FC<LivechatProps> = ({
     </div>
   );
 };
+
 type RefLike = {
   id?: unknown;
   leadId?: unknown;
@@ -826,7 +902,7 @@ type RefLike = {
   reference?: unknown;
   ref?: unknown;
 };
-// ✅ helper to show a tiny reference from server response if possible
+// helper to show a tiny reference from server response if possible
 function summarizeRef(res: unknown): string {
   if (res && typeof res === "object") {
     const r = res as RefLike;
