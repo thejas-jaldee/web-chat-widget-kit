@@ -1,7 +1,8 @@
 // src/components/dynamic-form/schemaAdapter.ts
 import { DynamicFormSchema, SimpleField, JsonNode, JsonType } from "./types";
 
-export function adaptToDynamicFormSchema(jsonSchema: JsonNode): DynamicFormSchema {
+export function 
+adaptToDynamicFormSchema(jsonSchema: JsonNode): DynamicFormSchema {
   const normalizedRoot = ensureType(jsonSchema);
   const fields = extractFields(normalizedRoot);
   return {

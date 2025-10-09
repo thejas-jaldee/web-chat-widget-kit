@@ -1,4 +1,3 @@
-// src/components/chatbot/Livechat.tsx
 import {
   MinusIcon,
   PaperclipIcon,
@@ -8,7 +7,7 @@ import {
   MessageCircle,
   ChevronRight,
 } from "lucide-react";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,8 +21,36 @@ import StaticLeadFields, {
   LeadErrors,
 } from "@/components/dynamic-form/StaticLeadFields";
 import { submitLead, type LeadSubmitPayload } from "@/components/lead/LeadSubmit";
-import { JALDEE_BASE_URL, JALDEE_LOCATION, JALDEE_AUTH_TOKEN } from "@/lib/env";
+import { JALDEE_BASE_URL, JALDEE_AUTH_TOKEN } from "@/lib/env";
 import { injectLeadFormSkin, injectLeadFormSkinIntoRoot } from "@/sdk/styles/injectFormSkin";
+
+/** ---------- lightweight types for the S3 JSON ---------- */
+type LeadSdkAction = {
+  id: string;
+  title: string;
+  channel: {
+    id: number;
+    name: string;
+    uid: string;            // chlead_...
+    encodedUid: string;     // ch-...
+    locationId: number;
+  };
+  product: string;
+  template?: {
+    uid: string;
+    templateName: string;
+    templateSchema?: unknown; // server may provide it; we still fetch via channel API on click per requirement
+  };
+};
+
+type LeadSdkJson = {
+  generatedAt: string;
+  source: string;
+  accountId: number;
+  count: number;
+  actions: LeadSdkAction[];
+};
+/** ------------------------------------------------------- */
 
 interface ConversationOption {
   id: string;
@@ -60,23 +87,6 @@ interface LivechatProps {
   configId?: string;
   className?: string;
 }
-
-type ActionButton =
-  | { text: string; className: string; id: "contact" | "product" | string; type: "link"; value: string }
-  | {
-      text: string;
-      className: string;
-      id: "contact" | "product" | string;
-      type: "conversation";
-      value: string;
-    }
-  | {
-      text: string;
-      className: string;
-      id: "contact" | "product" | string;
-      type: "form";
-      value: string; // channelEncUid for form case
-    };
 
 type FlowMode = "idle" | "action-conversation" | "action-form";
 
@@ -138,7 +148,7 @@ function removeFields(s: DynamicFormSchema, toRemove: string[] = []): DynamicFor
     }
 
     if (f.type === "array") {
-      const mapped: SimpleField = { ...f }; // prefer-const satisfied
+      const mapped: SimpleField = { ...f };
       const items = f.items as unknown;
 
       if (items && typeof items === "object" && "type" in (items as Record<string, unknown>)) {
@@ -154,7 +164,6 @@ function removeFields(s: DynamicFormSchema, toRemove: string[] = []): DynamicFor
           mapped.items = itemField;
         }
       } else if (items !== undefined) {
-        // keep primitive/unknown items as-is without casting to any
         (mapped as unknown as { items?: unknown }).items = items;
       }
 
@@ -173,6 +182,28 @@ function removeFields(s: DynamicFormSchema, toRemove: string[] = []): DynamicFor
   };
 }
 
+/** Fetch template schema by channel encoded UID (GET) */
+async function getTemplateByChannelEncUid(channelEncUid: string, signal?: AbortSignal) {
+  const url = `${JALDEE_BASE_URL.replace(/\/$/, "")}/v1/rest/consumer/crm/lead/template/channel/${encodeURIComponent(
+    channelEncUid
+  )}`;
+  const res = await fetch(url, {
+    method: "GET",
+    signal,
+    headers: {
+      Accept: "application/json",
+      ...(JALDEE_AUTH_TOKEN ? { Authorization: `Bearer ${JALDEE_AUTH_TOKEN}` } : {}),
+    },
+    credentials: "include",
+    mode: "cors",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Template fetch failed (${res.status}): ${text || res.statusText}`);
+  }
+  return res.json(); // raw server schema
+}
+
 export const Livechat: React.FC<LivechatProps> = ({
   configId = "default",
   className = "",
@@ -186,15 +217,23 @@ export const Livechat: React.FC<LivechatProps> = ({
   const [isMinimized, setIsMinimized] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // === new: retain the S3 JSON for the session ===
+  const [sdkJson, setSdkJson] = useState<LeadSdkJson | null>(null);
+
+  // dynamic form bits
   const [formSchema, setFormSchema] = useState<DynamicFormSchema | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // dynamic form/UI switches
+  // UI switches
   const [formTitle, setFormTitle] = useState<string>("");
   const [showDynamicForm, setShowDynamicForm] = useState<boolean>(false);
 
-  // dedicated form ref for submit + skin injection
+  // selected action meta (for submit)
+  const [selectedChannelEncUid, setSelectedChannelEncUid] = useState<string>("");
+  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
+
+  // form + skin injection
   const formRef = useRef<HTMLFormElement | null>(null);
   useEffect(() => {
     const node = formRef.current;
@@ -222,7 +261,6 @@ export const Livechat: React.FC<LivechatProps> = ({
   const [leadErrors, setLeadErrors] = useState<LeadErrors>({});
   const [dynamicValues, setDynamicValues] = useState<Record<string, unknown>>({});
   const [flowMode, setFlowMode] = useState<FlowMode>("idle");
-  const [channelEncUid, setChannelEncUid] = useState<string>("");
 
   function validateLeadInfo(data: LeadInfo): boolean {
     const errs: LeadErrors = {};
@@ -246,17 +284,7 @@ export const Livechat: React.FC<LivechatProps> = ({
     return Object.keys(errs).length === 0;
   }
 
-  const actionButtons: ActionButton[] = [
-    { text: "Contact Us", className: "w-[120px]", id: "contact", type: "form", value: "ch-43c0036-4t" },
-    { text: "Product Enquiry", className: "w-[161px]", id: "product", type: "form", value: "ch-43c0036-4t" },
-    { text: "Create Support Ticket", className: "w-[200px]", id: "support", type: "conversation", value: "support-ticket" },
-    { text: "Get Quote", className: "w-[119px]", id: "quote", type: "conversation", value: "get-quote" },
-    { text: "Feedback", className: "w-[107px]", id: "feedback", type: "conversation", value: "feedback" },
-  ];
-
-  const formatTime = (date: Date) =>
-    date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
+  // ===== time ticker for "Today, HH:MM" =====
   useEffect(() => {
     const now = new Date();
     const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
@@ -276,6 +304,7 @@ export const Livechat: React.FC<LivechatProps> = ({
     };
   }, []);
 
+  // ===== Load static chatbot-configs.json =====
   useEffect(() => {
     let isMounted = true;
     (async () => {
@@ -285,15 +314,41 @@ export const Livechat: React.FC<LivechatProps> = ({
         const selectedConfig = configs[configId] || configs.default;
         if (isMounted) {
           setConfig(selectedConfig);
-          setLoading(false);
         }
       } catch (e) {
         console.error("Failed to load chatbot config:", e);
+      } finally {
         if (isMounted) setLoading(false);
       }
     })();
     return () => { isMounted = false; };
   }, [configId]);
+
+  // ===== NEW: fetch lead-sdk.json exactly once on open and retain =====
+  useEffect(() => {
+    const abort = new AbortController();
+    let isMounted = true;
+    (async () => {
+      try {
+        // You can pass an accountId here if your schemaClient implementation expects it;
+        // ours ignores the argument and uses its configured S3 path.
+        const data = (await getLeadSdkJson(String(Date.now()), abort.signal)) as LeadSdkJson;
+        if (isMounted) setSdkJson(data);
+      } catch (e) {
+        console.error("Failed to fetch lead-sdk.json:", e);
+      }
+    })();
+    return () => {
+      isMounted = false;
+      abort.abort();
+    };
+  }, []); // only once per widget lifetime
+
+  // ===== derive action buttons from retained JSON =====
+  const jsonActions = useMemo(() => sdkJson?.actions ?? [], [sdkJson]);
+
+  const formatTime = (date: Date) =>
+    date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   // Auto-scroll when in conversation
   const msgWrapRef = useRef<HTMLDivElement | null>(null);
@@ -354,73 +409,47 @@ export const Livechat: React.FC<LivechatProps> = ({
     if (currentView !== "conversation") setCurrentView("conversation");
   };
 
-  const handleQuickAction = (action: ActionButton) => {
-    switch (action.type) {
-      case "form": {
-        setFlowMode("action-form");
-        setCurrentView("form");
-        setChannelEncUid(action.value);
+  const handleJsonActionClick = (action: LeadSdkAction) => {
+    // move into form mode + reset state
+    setFlowMode("action-form");
+    setCurrentView("form");
+    setFormError(null);
+    setDynamicValues({});
+    setLeadErrors({});
+    setLeadInfo({ firstName: "", lastName: "", phoneNumber: "", emailId: "" });
 
-        // Reset form state
-        setFormError(null);
-        setDynamicValues({});
-        setLeadErrors({});
-        setLeadInfo({ firstName: "", lastName: "", phoneNumber: "", emailId: "" });
+    // remember channel/location for submit
+    setSelectedChannelEncUid(action.channel.encodedUid);
+    setSelectedLocationId(action.channel.locationId);
 
-        if (action.id === "contact") {
-          // Static only
-          setShowDynamicForm(false);
-          setFormTitle("Contact Us");
-          setFormSchema(null);
-          setFormLoading(false);
-          return;
-        }
+    setFormTitle(action.title || "Form");
+    setShowDynamicForm(true);
+    setFormSchema(null);
+    setFormLoading(true);
 
-        if (action.id === "product") {
-          // Dynamic form with City removed
-          setShowDynamicForm(true);
-          setFormTitle("Product Enquiry");
-          setFormSchema(null);
-          setFormLoading(true);
+    const controller = new AbortController();
+    (async () => {
+      try {
+        // Per requirement: always fetch by channel on click (even if JSON already has a schema)
+        const raw = await getTemplateByChannelEncUid(action.channel.encodedUid, controller.signal);
+        const schemaNode =
+        typeof raw === "object" && raw !== null && "templateSchema" in raw
+          ? (raw as { templateSchema: unknown }).templateSchema
+          : raw;
+        let schema = adaptToDynamicFormSchema(schemaNode);
 
-          const controller = new AbortController();
-          (async () => {
-            try {
-              const raw = await getLeadSdkJson(action.value, controller.signal);
-              const schemaNode = raw?.templateSchema ?? raw;
-              let schema = adaptToDynamicFormSchema(schemaNode);
+        // Optional UX cleanup (safe no-ops if titles not present)
+        schema = stripTitles(schema, ["Default Template", "Additional Info"]);
+        // Example removal if needed: schema = removeFields(schema, ["City"]);
 
-              schema = stripTitles(schema, ["Additional Info"]);
-              schema = removeFields(schema, ["City"]);
-
-              setFormSchema(schema);
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : "Failed to load form";
-              setFormError(msg);
-            } finally {
-              setFormLoading(false);
-            }
-          })();
-          return;
-        }
-
-        // Fallback: static-only
-        setShowDynamicForm(false);
-        setFormTitle("Form");
-        setFormSchema(null);
+        setFormSchema(schema);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to load form";
+        setFormError(msg);
+      } finally {
         setFormLoading(false);
-        return;
       }
-
-      case "link":
-        window.open(action.value, "_blank");
-        return;
-
-      case "conversation":
-        setFlowMode("action-conversation");
-        startConversation(action.value);
-        return;
-    }
+    })();
   };
 
   const resetChat = () => {
@@ -435,7 +464,8 @@ export const Livechat: React.FC<LivechatProps> = ({
     setDynamicValues({});
     setLeadInfo({ firstName: "", lastName: "", phoneNumber: "", emailId: "" });
     setLeadErrors({});
-    setChannelEncUid("");
+    setSelectedChannelEncUid("");
+    setSelectedLocationId(null);
     setFormTitle("");
     setShowDynamicForm(false);
   };
@@ -564,7 +594,7 @@ export const Livechat: React.FC<LivechatProps> = ({
           )}
 
           {/* Chat Card */}
-          <Card className={`flex-1 min-h-0 w-full bg-white rounded-[18px] sm:rounded-[25px] border border-[#e2e2e2] shadow-lg overflow-hidden ${headerClsBase}`}>
+          <Card className={`flex-1 min-h-0 w-full lsdk-scroll bg-white rounded-[18px] sm:rounded-[25px] border border-[#e2e2e2] shadow-lg overflow-hidden ${headerClsBase}`}>
             <CardContent className="p-3 sm:p-4 h-full flex flex-col min-h-0">
               {currentView === "welcome" ? (
                 <>
@@ -586,11 +616,12 @@ export const Livechat: React.FC<LivechatProps> = ({
                     </div>
                   </div>
 
+                  {/* dynamic buttons from JSON */}
                   <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-3 mb-auto">
-                    {actionButtons.map((button) => (
+                    {jsonActions.map((a) => (
                       <Button
-                        key={button.id}
-                        onClick={() => handleQuickAction(button)}
+                        key={a.id}
+                        onClick={() => handleJsonActionClick(a)}
                         variant="outline"
                         className="w-auto min-w-[9rem] sm:min-w-0 px-4 h-[42px] bg-white rounded-[24.1px] border-[0.96px] border-transparent hover:shadow-md transition-all duration-200 hover:scale-105"
                         style={{
@@ -602,10 +633,13 @@ export const Livechat: React.FC<LivechatProps> = ({
                         } as React.CSSProperties}
                       >
                         <span className="bg-[linear-gradient(90deg,rgba(131,80,242,1)_20%,rgba(61,125,243,1)_80%)] [-webkit-background-clip:text] bg-clip-text [-webkit-text-fill-color:transparent] font-medium text-[clamp(13px,1.4vw,15.4px)] leading-[22px] whitespace-nowrap">
-                          {button.text}
+                          {a.title}
                         </span>
                       </Button>
                     ))}
+                    {!jsonActions.length && (
+                      <div className="text-sm text-[#667084]">No actions available.</div>
+                    )}
                   </div>
 
                   {/* Sticky input only on welcome */}
@@ -685,7 +719,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                   </button>
                 </div>
               ) : (
-                // === SINGLE FORM VIEW (static + optional dynamic, one submit) ===
+                // === SINGLE FORM VIEW ===
                 <div className="flex-1 min-h-0 flex flex-col">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-[15px] font-semibold text-[#272727]">
@@ -709,7 +743,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                       if (!validateLeadInfo(leadInfo)) return;
 
                       const payload: LeadSubmitPayload = {
-                        channelEncUid: channelEncUid || "ch-43c0036-4t",
+                        channelEncUid: selectedChannelEncUid, // from clicked action
                         crmLeadConsumer: {
                           firstName: leadInfo.firstName.trim(),
                           lastName: leadInfo.lastName?.trim() || undefined,
@@ -736,7 +770,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                       try {
                         const res = await submitLead(payload, {
                           baseUrl: JALDEE_BASE_URL,
-                          location: JALDEE_LOCATION,
+                          location: selectedLocationId ?? "", // use the JSON's locationId
                           authToken: JALDEE_AUTH_TOKEN || undefined,
                           timeoutMs: 15000,
                           includeCredentials: true,
@@ -750,12 +784,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                             content: "Thanks! Your request has been received. Our team will contact you shortly.",
                             timestamp: new Date(),
                           },
-                          {
-                            id: (Date.now() + 2).toString(),
-                            type: "bot",
-                            content: `Reference: ${summarizeRef(res)}`,
-                            timestamp: new Date(),
-                          },
+                      
                         ]);
 
                         // reset form values
@@ -789,7 +818,7 @@ export const Livechat: React.FC<LivechatProps> = ({
                       errors={leadErrors}
                     />
 
-                    {/* Dynamic fields only when required (e.g., Product Enquiry) */}
+                    {/* Dynamic fields */}
                     {showDynamicForm && !formLoading && !formError && formSchema && (
                       <DynamicForm
                         schema={formSchema}
